@@ -1,8 +1,9 @@
 from flask import Flask, render_template, request
+import os
 
 app = Flask(__name__)
 
-# 試合結果と勝敗判定（勝ち=1.0、負け=0.0）
+# 試合結果（スコア）とその勝敗（1=勝ち, 0=負け）を設定
 match_results = [
     ("3-0", 1.0),
     ("3-1", 1.0),
@@ -18,7 +19,7 @@ def index():
     error = None
     team1 = team2 = ""
     team1_point = team2_point = 0.0
-    weight = 40  # MWF（係数）
+    weight = 40  # デフォルトMWF
 
     if request.method == "POST":
         try:
@@ -28,16 +29,16 @@ def index():
             team2_point = float(request.form["team2_point"])
             weight = int(request.form["weight"])
 
-            # 期待値計算（勝つ確率の期待値）
+            # 期待勝率
             expected_team1 = 1 / (1 + 10 ** ((team2_point - team1_point) / 100))
             expected_team2 = 1 - expected_team1
 
-            # 各試合結果ごとのポイント増減計算
+            # 各スコアのポイント変動計算
             for score, outcome in match_results:
-                if outcome == 1.0:  # team1勝ち
+                if outcome == 1.0:  # team1勝利
                     delta1 = round(weight * (1 - expected_team1), 2)
                     delta2 = round(weight * (0 - expected_team2), 2)
-                else:  # team1負け
+                else:  # team1敗北
                     delta1 = round(weight * (0 - expected_team1), 2)
                     delta2 = round(weight * (1 - expected_team2), 2)
 
@@ -50,7 +51,7 @@ def index():
                 })
 
         except Exception as e:
-            error = f"入力エラーです。正しい値を入力してください。 ({e})"
+            error = f"エラー: 入力を確認してください（{e}）"
 
     return render_template("index.html",
                            data=data,
