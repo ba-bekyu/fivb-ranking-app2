@@ -61,5 +61,7 @@ def index():
                            weight=weight,
                            error=error)
 
+# Render用：PORT環境変数に従って0.0.0.0でバインド
 if __name__ == "__main__":
-    app.run(debug=True)
+    port = int(os.environ.get("PORT", 5000))
+    app.run(host="0.0.0.0", port=port)
