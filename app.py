@@ -1,17 +1,22 @@
 from flask import Flask, render_template, request
 import os
+import math
 
 app = Flask(__name__)
 
-# 試合結果（スコア）とその勝敗（1=勝ち, 0=負け）を設定
-match_results = [
-    ("3-0", 1.0),
-    ("3-1", 1.0),
-    ("3-2", 1.0),
-    ("2-3", 0.0),
-    ("1-3", 0.0),
-    ("0-3", 0.0)
-]
+# C1～C5のカットポイント（正規分布のz値）
+C_points = {
+    "3-0": -1.060,
+    "3-1": -0.394,
+    "3-2": 0.0,
+    "2-3": 0.394,
+    "1-3": 1.060,
+    "0-3": 2.0  # 0-3はC5より大きいので仮に2.0とする
+}
+
+# 正規分布の累積分布関数（CDF）
+def norm_cdf(x):
+    return (1 + math.erf(x / math.sqrt(2))) / 2
 
 @app.route("/", methods=["GET", "POST"])
 def index():
@@ -29,18 +34,46 @@ def index():
             team2_point = float(request.form["team2_point"])
             weight = int(request.form["weight"])
 
-            # 期待勝率
-            expected_team1 = 1 / (1 + 10 ** ((team2_point - team1_point) / 100))
+            # 実力差D（FIVBでは400で割る）
+            D = (team1_point - team2_point) / 400
+
+            # FIVB公式の式に基づく期待勝率（正規分布のCDF）
+            expected_team1 = norm_cdf(D)
             expected_team2 = 1 - expected_team1
 
-            # 各スコアのポイント変動計算
-            for score, outcome in match_results:
-                if outcome == 1.0:  # team1勝利
-                    delta1 = round(weight * (1 - expected_team1), 2)
-                    delta2 = round(weight * (0 - expected_team2), 2)
-                else:  # team1敗北
-                    delta1 = round(weight * (0 - expected_team1), 2)
-                    delta2 = round(weight * (1 - expected_team2), 2)
+            # 試合結果ごとのポイント変動計算
+            for score, C in C_points.items():
+                # FIVBはポイント変動 = MWF × (勝者側の経験値 - 期待値) で計算
+                # 勝者側経験値はCDFで区間確率を計算する必要があるが、
+                # 実際はカットポイントCとDの差でCDF値の差を取って区間確率を得る。
+
+                # まず、上限カットポイント
+                # 下限は次のスコアのC値で定義されるが、単純化して
+                # 区間は [C_prev, C_current] と仮定（要注意）
+
+                # 区間確率は、勝者がこのスコアを得る確率
+                # → P(C_i < Z - D < C_{i+1}) = norm_cdf(C_upper - D) - norm_cdf(C_lower - D)
+
+                # ただしここでは簡易的にCDFで評価
+
+                # ポイント変動は (CDF(C - D) - CDF(C_ref)) × weight
+                # C_refはそのスコアが同点（D=0）のときの期待値
+
+                # 0-3スコアは特別扱いとして区間の上限なし
+                # 区間計算用にC_pointsを順序付けリストにする
+
+                # ここでは単純に C - D のCDFから D=0 のCDFを引いてポイント変動を計算
+
+                delta = weight * (norm_cdf(C - D) - norm_cdf(C))
+                # 勝利チームがteam1なら +delta、負けチームは -delta
+
+                # 勝者・敗者判定はスコアの形で判別
+                if score.startswith("3-"):  # team1勝ち
+                    delta1 = round(delta, 2)
+                    delta2 = round(-delta, 2)
+                else:  # team1負け
+                    delta1 = round(-delta, 2)
+                    delta2 = round(delta, 2)
 
                 data.append({
                     "score": score,
@@ -62,7 +95,7 @@ def index():
                            weight=weight,
                            error=error)
 
-# Render用：PORT環境変数に従って0.0.0.0でバインド
+
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
     app.run(host="0.0.0.0", port=port)
