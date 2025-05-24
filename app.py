@@ -1,101 +1,101 @@
 from flask import Flask, render_template, request
 import os
-import math
+from scipy.stats import norm
 
 app = Flask(__name__)
 
-# C1～C5のカットポイント（正規分布のz値）
-C_points = {
+# カットポイント（C1〜C5）
+C = {
     "3-0": -1.060,
     "3-1": -0.394,
-    "3-2": 0.0,
-    "2-3": 0.394,
-    "1-3": 1.060,
-    "0-3": 2.0  # 0-3はC5より大きいので仮に2.0とする
+    "3-2":  0.000,
+    "2-3":  0.394,
+    "1-3":  1.060,
+    "0-3":  float("inf")  # 最後は1から引く
 }
 
-# 正規分布の累積分布関数（CDF）
-def norm_cdf(x):
-    return (1 + math.erf(x / math.sqrt(2))) / 2
+# セットスコアとSSV（Set Score Value）
+ssv_map = {
+    "3-0": +2.0,
+    "3-1": +1.5,
+    "3-2": +1.0,
+    "2-3": -1.0,
+    "1-3": -1.5,
+    "0-3": -2.0
+}
 
 @app.route("/", methods=["GET", "POST"])
 def index():
-    data = []
+    results = []
     error = None
     team1 = team2 = ""
-    team1_point = team2_point = 0.0
-    weight = 40  # デフォルトMWF
+    rating1 = rating2 = 0.0
+    mwf = 50  # デフォルトMWF
 
     if request.method == "POST":
         try:
-            team1 = request.form["team1"].upper()
-            team2 = request.form["team2"].upper()
-            team1_point = float(request.form["team1_point"])
-            team2_point = float(request.form["team2_point"])
-            weight = int(request.form["weight"])
+            team1 = request.form["team1"]
+            team2 = request.form["team2"]
+            rating1 = float(request.form["rating1"])
+            rating2 = float(request.form["rating2"])
+            mwf = int(request.form["mwf"])
 
-            # 実力差D（FIVBでは400で割る）
-            D = (team1_point - team2_point) / 400
+            delta = 8 * (rating1 - rating2) / 1000
 
-            # FIVB公式の式に基づく期待勝率（正規分布のCDF）
-            expected_team1 = norm_cdf(D)
-            expected_team2 = 1 - expected_team1
+            # 正規分布による結果確率
+            prob = {}
+            cutoffs = list(C.items())
+            for i in range(len(cutoffs)):
+                score, c_value = cutoffs[i]
+                if score == "3-0":
+                    p = norm.cdf(c_value + delta)
+                elif score == "0-3":
+                    p = 1 - norm.cdf(C["1-3"] + delta)
+                else:
+                    p = norm.cdf(c_value + delta) - norm.cdf(cutoffs[i - 1][1] + delta)
+                prob[score] = p
 
-            # 試合結果ごとのポイント変動計算
-            for score, C in C_points.items():
-                # FIVBはポイント変動 = MWF × (勝者側の経験値 - 期待値) で計算
-                # 勝者側経験値はCDFで区間確率を計算する必要があるが、
-                # 実際はカットポイントCとDの差でCDF値の差を取って区間確率を得る。
+            # EMR（Expected Match Result）
+            emr = sum(prob[score] * ssv_map[score] for score in ssv_map)
 
-                # まず、上限カットポイント
-                # 下限は次のスコアのC値で定義されるが、単純化して
-                # 区間は [C_prev, C_current] と仮定（要注意）
+            # 各試合結果ごとのポイント変動
+            for score in ssv_map:
+                actual_ssv = ssv_map[score]
+                wr_value = actual_ssv - emr
+                raw_delta = round(wr_value * mwf / 8, 3)
 
-                # 区間確率は、勝者がこのスコアを得る確率
-                # → P(C_i < Z - D < C_{i+1}) = norm_cdf(C_upper - D) - norm_cdf(C_lower - D)
+                # 最低保証ルール
+                if actual_ssv > 0:  # 勝利
+                    delta1 = max(raw_delta, 0.01)
+                    delta2 = -delta1
+                elif actual_ssv < 0:  # 敗北
+                    delta1 = min(raw_delta, -0.01)
+                    delta2 = -delta1
+                else:
+                    delta1 = delta2 = 0.0
 
-                # ただしここでは簡易的にCDFで評価
-
-                # ポイント変動は (CDF(C - D) - CDF(C_ref)) × weight
-                # C_refはそのスコアが同点（D=0）のときの期待値
-
-                # 0-3スコアは特別扱いとして区間の上限なし
-                # 区間計算用にC_pointsを順序付けリストにする
-
-                # ここでは単純に C - D のCDFから D=0 のCDFを引いてポイント変動を計算
-
-                delta = weight * (norm_cdf(C - D) - norm_cdf(C))
-                # 勝利チームがteam1なら +delta、負けチームは -delta
-
-                # 勝者・敗者判定はスコアの形で判別
-                if score.startswith("3-"):  # team1勝ち
-                    delta1 = round(delta, 2)
-                    delta2 = round(-delta, 2)
-                else:  # team1負け
-                    delta1 = round(-delta, 2)
-                    delta2 = round(delta, 2)
-
-                data.append({
+                results.append({
                     "score": score,
-                    "team1_delta": delta1,
-                    "team2_delta": delta2,
-                    "team1_new": round(team1_point + delta1, 2),
-                    "team2_new": round(team2_point + delta2, 2)
+                    "probability": round(prob[score] * 100, 2),
+                    "team1_delta": round(delta1, 3),
+                    "team2_delta": round(delta2, 3),
+                    "team1_new": round(rating1 + delta1, 3),
+                    "team2_new": round(rating2 + delta2, 3)
                 })
 
         except Exception as e:
-            error = f"エラー: 入力を確認してください（{e}）"
+            error = f"エラー: {str(e)}"
 
     return render_template("index.html",
-                           data=data,
+                           results=results,
                            team1=team1,
                            team2=team2,
-                           team1_point=team1_point,
-                           team2_point=team2_point,
-                           weight=weight,
+                           rating1=rating1,
+                           rating2=rating2,
+                           mwf=mwf,
                            error=error)
 
-
+# Render対応
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
     app.run(host="0.0.0.0", port=port)
