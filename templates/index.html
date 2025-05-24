@@ -1,0 +1,51 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8" />
+    <title>FIVBランキングポイント計算</title>
+</head>
+<body>
+    <h1>FIVBランキングポイント計算</h1>
+    {% if error %}
+    <p style="color:red;">{{ error }}</p>
+    {% endif %}
+    <form method="post">
+        <label>チーム1（国コード）: <input type="text" name="team1" value="{{ team1 }}" required></label><br>
+        <label>チーム1現在ポイント: <input type="number" step="0.01" name="team1_point" value="{{ team1_point }}" required></label><br>
+        <label>チーム2（国コード）: <input type="text" name="team2" value="{{ team2 }}" required></label><br>
+        <label>チーム2現在ポイント: <input type="number" step="0.01" name="team2_point" value="{{ team2_point }}" required></label><br>
+        <label>MWF:<select name="weight">
+            <option value="50" {% if weight == 50 %}selected{% endif %}>五輪・世界選手権：50</option>
+            <option value="40" {% if weight == 40 %}selected{% endif %}>VNL・大陸選手権：40</option>
+            <option value="30" {% if weight == 30 %}selected{% endif %}>隔年大陸イベント等：30</option>
+        </select></label><br><br>
+        <input type="submit" value="計算する">
+    </form>
+
+    {% if data %}
+    <h2>計算結果</h2>
+    <table border="1" cellpadding="5" cellspacing="0">
+        <thead>
+            <tr>
+                <th>試合結果</th>
+                <th>{{ team1 }} ポイント増減</th>
+                <th>{{ team2 }} ポイント増減</th>
+                <th>{{ team1 }} 新ポイント</th>
+                <th>{{ team2 }} 新ポイント</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for d in data %}
+            <tr>
+                <td>{{ d.score }}</td>
+                <td>{{ d.team1_delta }}</td>
+                <td>{{ d.team2_delta }}</td>
+                <td>{{ d.team1_new }}</td>
+                <td>{{ d.team2_new }}</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    {% endif %}
+</body>
+</html>
